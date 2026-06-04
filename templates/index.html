@@ -428,7 +428,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 2rem; }
         </a>
       </div>
       <div class="chart-img-wrap">
-        <img class="chart-img" src="/latest-chart?v={{ summary.snapshot_date }}" alt="Beta Plan progress chart" loading="lazy">
+        {% if chart_b64 %}
+        <img class="chart-img" src="data:image/png;base64,{{ chart_b64 }}" alt="Beta Plan progress chart">
+        {% else %}
+        <p style="color:var(--muted);font-size:13px;padding:1rem 0">Chart not available — please re-upload the xlsx.</p>
+        {% endif %}
       </div>
     </div>
 
