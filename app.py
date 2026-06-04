@@ -15,12 +15,15 @@ from openpyxl import load_workbook
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 
-# ── persistent storage (survives deploys on Render disk / local) ─────────────
+# ── persistent storage ────────────────────────────────────────────────────────
+# Chart is stored as base64 INSIDE the summary JSON so the whole page —
+# including the image — is delivered in a single request. No broken image on
+# free-tier /tmp restarts, and no second HTTP round-trip for Jim.
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/tmp/betaplan_data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-CHART_PATH   = DATA_DIR / "latest_chart.png"
-SUMMARY_PATH = DATA_DIR / "latest_summary.json"
+SUMMARY_PATH = DATA_DIR / "latest_summary.json"   # contains chart_b64 key
 ROWS_PATH    = DATA_DIR / "latest_rows.json"
+CHART_PATH   = DATA_DIR / "latest_chart.png"      # kept for download endpoint
 
 WORKSTREAM_ORDER = [
     "Onboarding", "Setup", "Plan", "Prepare", "Execute",
@@ -35,7 +38,7 @@ STATUS_COLORS = {
 }
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def parse_xlsx(file_bytes: bytes) -> list[dict]:
     wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
@@ -179,38 +182,50 @@ def summarise(rows: list[dict], uploaded_by: str = "") -> dict:
     }
 
 
-# ── routes ───────────────────────────────────────────────────────────────────
+# ── routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
-    """Main dashboard — read-only view for Jim, upload view for Rishab."""
-    has_data = CHART_PATH.exists() and SUMMARY_PATH.exists()
+    """Main dashboard. chart_b64 is embedded in the page — no second request."""
+    has_data = SUMMARY_PATH.exists()
     summary = None
+    chart_b64 = None
     if has_data:
-        summary = json.loads(SUMMARY_PATH.read_text())
-    return render_template("index.html", has_data=has_data, summary=summary)
+        data = json.loads(SUMMARY_PATH.read_text())
+        chart_b64 = data.pop("chart_b64", None)   # pull out before passing to template
+        summary = data
+    return render_template("index.html", has_data=has_data,
+                           summary=summary, chart_b64=chart_b64)
 
 
 @app.route("/latest-chart")
 def latest_chart():
-    """Serve the persisted chart PNG to anyone with the URL."""
-    if not CHART_PATH.exists():
+    """Download endpoint — regenerates from saved rows if PNG file is missing."""
+    if CHART_PATH.exists():
+        return send_file(CHART_PATH, mimetype="image/png",
+                         download_name="Progress_Chart_latest.png")
+    # PNG file gone (free-tier /tmp wipe) — regenerate from saved rows
+    if not ROWS_PATH.exists():
         return Response("No chart yet — upload a file first.", status=404, mimetype="text/plain")
-    return send_file(CHART_PATH, mimetype="image/png",
+    rows = json.loads(ROWS_PATH.read_text())
+    png = make_chart(rows)
+    CHART_PATH.write_bytes(png)
+    return send_file(io.BytesIO(png), mimetype="image/png",
                      download_name="Progress_Chart_latest.png")
 
 
 @app.route("/latest-summary")
 def latest_summary():
-    """JSON endpoint — handy for any future integrations."""
     if not SUMMARY_PATH.exists():
         return jsonify({"error": "No data yet"}), 404
-    return Response(SUMMARY_PATH.read_text(), mimetype="application/json")
+    data = json.loads(SUMMARY_PATH.read_text())
+    data.pop("chart_b64", None)   # don't expose huge base64 in JSON API
+    return jsonify(data)
 
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    """Rishab uploads xlsx → parse → generate chart → persist both → respond."""
+    """Rishab uploads xlsx → parse → generate chart → persist → respond."""
     f = request.files.get("file")
     if not f:
         return jsonify({"error": "No file uploaded"}), 400
@@ -234,17 +249,20 @@ def upload():
 
     summary = summarise(rows, uploaded_by)
 
-    # Persist to disk so Jim can see the latest without Rishab being online
+    # Embed chart as base64 in summary so the homepage never needs a second request
+    chart_b64 = base64.b64encode(png).decode()
+    payload = {**summary, "chart_b64": chart_b64}
+
+    SUMMARY_PATH.write_text(json.dumps(payload))
+    ROWS_PATH.write_text(json.dumps(rows))
     CHART_PATH.write_bytes(png)
-    SUMMARY_PATH.write_text(json.dumps(summary, indent=2))
-    ROWS_PATH.write_text(json.dumps(rows, indent=2))
 
     return jsonify({"ok": True, "summary": summary, "rows": rows})
 
 
 @app.route("/chart", methods=["POST"])
 def chart():
-    """Re-render chart from posted rows (used after upload for inline display)."""
+    """Inline chart render for the upload-tab preview."""
     body = request.get_json(silent=True) or {}
     rows = body.get("rows")
     if not rows:
