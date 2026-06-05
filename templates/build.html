@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build State — Live Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F7F6F2;
+  --surface: #FFFFFF;
+  --border: rgba(0,0,0,.08);
+  --text: #1A1A18;
+  --muted: #76756E;
+  --accent: #2563EB;
+  --green: #3B6D11;
+  --amber: #854F0B;
+  --red: #A32D2D;
+  --blue: #185FA5;
+  --green-bg: #EAF3DE;
+  --amber-bg: #FAEEDA;
+  --red-bg: #FCEBEB;
+  --blue-bg: #E6F1FB;
+  --radius: 10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; line-height: 1.6; }
+
+/* ── top nav ── */
+.top-nav {
+  background: #111827;
+  padding: 0 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 38px;
+}
+.top-nav a {
+  color: rgba(255,255,255,.55);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 0 14px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.top-nav a:hover { color: white; }
+.top-nav a.active { color: white; border-bottom-color: #2563EB; }
+.top-nav .divider { width: 1px; height: 18px; background: rgba(255,255,255,.12); margin: 0 4px; }
+
+/* ── header ── */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+header h1 { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.pill-jim  { font-size: 11px; background: #DBEAFE; color: #1d4ed8; padding: 2px 8px; border-radius: 20px; font-family: 'DM Mono', monospace; }
+.pill-team { font-size: 11px; background: var(--green-bg); color: var(--green); padding: 2px 8px; border-radius: 20px; font-family: 'DM Mono', monospace; }
+.header-meta { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+
+/* ── tabs ── */
+.tabs { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 2rem; }
+.tab-btn {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 10px 16px; font-size: 13px; font-family: 'DM Sans', sans-serif;
+  color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s; margin-bottom: -1px;
+}
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+.tab-btn:hover:not(.active) { color: var(--text); }
+
+main { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── metrics ── */
+.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 1.5rem; }
+.metric-card { background: var(--surface); border-radius: var(--radius); padding: 14px 16px; border: 1px solid var(--border); }
+.metric-card .label { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
+.metric-card .value { font-size: 26px; font-weight: 300; letter-spacing: -.02em; }
+.metric-card .sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── ledger split card ── */
+.ledger-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 16px;
+  margin-bottom: 1.5rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.ledger-side h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
+.ledger-bar-wrap { height: 10px; background: rgba(0,0,0,.06); border-radius: 20px; overflow: hidden; margin-bottom: 6px; }
+.ledger-fill { height: 100%; border-radius: 20px; transition: width .6s cubic-bezier(.16,1,.3,1); }
+.ledger-pct { font-size: 22px; font-weight: 300; }
+.ledger-label { font-size: 11px; color: var(--muted); }
+
+/* ── module table ── */
+.module-section { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); padding: 16px; margin-bottom: 1.5rem; }
+.module-section h3 { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 12px; }
+.mod-row { display: grid; grid-template-columns: 180px 1fr 60px 60px 60px; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.mod-row:last-child { border-bottom: none; }
+.mod-name { font-size: 12px; font-family: 'DM Mono', monospace; font-weight: 500; }
+.mod-bar-wrap { position: relative; height: 8px; background: rgba(0,0,0,.06); border-radius: 20px; overflow: hidden; }
+.mod-bar-jim  { position: absolute; left: 0; height: 100%; background: #2563EB; border-radius: 20px 0 0 20px; transition: width .6s cubic-bezier(.16,1,.3,1); }
+.mod-bar-team { position: absolute; height: 100%; background: #7AB87A; transition: left .6s, width .6s cubic-bezier(.16,1,.3,1); }
+.mod-pct { font-size: 11px; font-family: 'DM Mono', monospace; color: var(--muted); text-align: right; }
+.size-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); font-family: 'DM Mono', monospace; text-align: center; }
+
+/* ── chart card ── */
+.chart-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+.chart-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 8px; }
+.chart-toolbar span { font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+.btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(0,0,0,.12); background: var(--surface); cursor: pointer; color: var(--text); font-family: 'DM Sans', sans-serif; transition: background .15s; text-decoration: none; }
+.btn:hover { background: var(--bg); }
+.btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+.chart-img-wrap { padding: 16px; }
+.chart-img { width: 100%; border-radius: 6px; display: block; }
+
+/* ── upload ── */
+#drop-zone { border: 1.5px dashed rgba(0,0,0,.18); border-radius: var(--radius); background: var(--surface); padding: 3rem 2rem; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; margin-bottom: 1rem; }
+#drop-zone.over { border-color: var(--accent); background: #EEF3FD; }
+#drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.upload-icon { width: 48px; height: 48px; border-radius: 12px; background: #DBEAFE; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem; }
+.upload-icon svg { width: 24px; height: 24px; stroke: #2563EB; fill: none; stroke-width: 1.8; }
+#drop-zone h2 { font-size: 15px; font-weight: 500; margin-bottom: 6px; }
+#drop-zone p  { font-size: 13px; color: var(--muted); }
+#drop-zone .formats { font-size: 11px; color: var(--muted); margin-top: 8px; font-family: 'DM Mono', monospace; }
+.name-row { display: flex; gap: 10px; align-items: center; margin-bottom: 1rem; }
+.name-row label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.name-row input { flex: 1; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: 'DM Sans', sans-serif; background: var(--surface); color: var(--text); max-width: 240px; }
+.name-row input:focus { outline: none; border-color: var(--accent); }
+.status-bar { display: none; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--radius); font-size: 13px; margin-bottom: 1rem; }
+.status-bar.loading { background: var(--blue-bg);  color: var(--blue);  display: flex; }
+.status-bar.error   { background: var(--red-bg);   color: var(--red);   display: flex; }
+.status-bar.ok      { background: var(--green-bg); color: var(--green); display: flex; }
+.spinner { width: 18px; height: 18px; border: 2px solid rgba(0,0,0,.1); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.copy-row { display: flex; align-items: center; gap: 8px; margin-top: 1rem; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.copy-row .url { flex: 1; font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
+.copy-btn { flex-shrink: 0; font-size: 11px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; font-family: 'DM Sans', sans-serif; color: var(--text); transition: background .15s; }
+.copy-btn:hover { background: var(--border); }
+.reupload-hint { font-size: 12px; color: var(--muted); cursor: pointer; background: none; border: none; text-decoration: underline; padding: 0; margin-top: 8px; display: none; }
+#upload-preview { display: none; margin-top: 1.5rem; }
+.no-data-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 3rem 2rem; text-align: center; color: var(--muted); }
+.no-data-card h3 { font-size: 15px; font-weight: 500; margin-bottom: 8px; color: var(--text); }
+
+/* ── gate rule info box ── */
+.info-box { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: var(--radius); padding: 12px 16px; font-size: 12px; color: #92400E; margin-bottom: 1rem; line-height: 1.7; }
+.info-box strong { font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- top nav shared across dashboards -->
+<nav class="top-nav">
+  <a href="/">📊 Beta Plan</a>
+  <div class="divider"></div>
+  <a href="/build" class="active">🔨 Build State</a>
+</nav>
+
+<header>
+  <div class="header-left">
+    <h1>Build State 2026</h1>
+    <span class="pill-jim">Jim DoR</span>
+    <span class="pill-team">Team DoD</span>
+  </div>
+  {% if summary %}
+  <span class="header-meta">Updated {{ summary.updated_at }}{% if summary.uploaded_by %} by {{ summary.uploaded_by }}{% endif %}</span>
+  {% endif %}
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('view', this)">📈 Progress View</button>
+  <button class="tab-btn" onclick="switchTab('upload', this)">⬆ Update Sheet</button>
+</div>
+
+<main>
+
+  <!-- ══ VIEW TAB ══ -->
+  <div class="tab-panel active" id="panel-view">
+
+    {% if not has_data %}
+    <div class="no-data-card">
+      <h3>No data yet</h3>
+      <p>Switch to <strong>Update Sheet</strong> and upload <code>Build_State_Tracker.csv</code> (or .xlsx) to generate the first chart.</p>
+    </div>
+
+    {% else %}
+
+    <!-- metrics row -->
+    <div class="metrics-row" style="margin-bottom:1.5rem">
+      <div class="metric-card">
+        <div class="label">Overall</div>
+        <div class="value">{{ summary.overall_pct }}%</div>
+        <div class="sub">{{ summary.done_pts }} / {{ summary.total_pts }} pts</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Jim DoR</div>
+        <div class="value" style="color:#2563EB">{{ summary.jim_pct }}%</div>
+        <div class="sub">spec &amp; mockup</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Team DoD</div>
+        <div class="value" style="color:#3B6D11">{{ summary.team_pct }}%</div>
+        <div class="sub">design → wiring</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Modules</div>
+        <div class="value" style="color:#76756E">{{ summary.module_count }}</div>
+        <div class="sub">{{ summary.component_count }} components</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Snapshot</div>
+        <div class="value" style="font-size:16px;margin-top:4px">{{ summary.snapshot_date }}</div>
+        <div class="sub">&nbsp;</div>
+      </div>
+    </div>
+
+    <!-- ledger split -->
+    <div class="ledger-card">
+      <div class="ledger-side">
+        <h3>Jim's ledger (DoR) — mockup + spec</h3>
+        <div class="ledger-bar-wrap">
+          <div class="ledger-fill" style="width:0%;background:#2563EB" data-target="{{ summary.jim_pct }}"></div>
+        </div>
+        <div class="ledger-pct" style="color:#2563EB">{{ summary.jim_pct }}%</div>
+        <div class="ledger-label">Jim_Mockup (12 pts) + Jim_SP (36 pts) = 48 pts total</div>
+      </div>
+      <div class="ledger-side">
+        <h3>Team's ledger (DoD) — design → build → wire</h3>
+        <div class="ledger-bar-wrap">
+          <div class="ledger-fill" style="width:0%;background:#7AB87A" data-target="{{ summary.team_pct }}"></div>
+        </div>
+        <div class="ledger-pct" style="color:#3B6D11">{{ summary.team_pct }}%</div>
+        <div class="ledger-label">Design (10) + FE dev (16) + MW (12) + FE wiring (14) = 52 pts</div>
+      </div>
+    </div>
+
+    <!-- module breakdown -->
+    <div class="module-section">
+      <h3>Module breakdown — sorted by screen size</h3>
+      <div class="mod-row" style="font-size:10px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--border);padding-bottom:6px">
+        <div>Module</div><div>Progress (blue=Jim · green=Team)</div>
+        <div style="text-align:right">Jim</div><div style="text-align:right">Team</div><div style="text-align:right">Size</div>
+      </div>
+      {% for mod, d in summary.by_module.items() %}
+      {% set jim_w  = (d.jim_pct  * 0.48) %}
+      {% set team_w = (d.team_pct * 0.52) %}
+      {% set overall = ((d.jim_pct * 0.48 + d.team_pct * 0.52)) %}
+      <div class="mod-row">
+        <div class="mod-name">{{ mod }}</div>
+        <div class="mod-bar-wrap">
+          <div class="mod-bar-jim"  style="width:0%" data-target="{{ jim_w }}"></div>
+          <div class="mod-bar-team" style="left:0%;width:0%" data-jtarget="{{ jim_w }}" data-ttarget="{{ team_w }}"></div>
+        </div>
+        <div class="mod-pct" style="color:#2563EB">{{ d.jim_pct }}%</div>
+        <div class="mod-pct" style="color:#3B6D11">{{ d.team_pct }}%</div>
+        <div class="size-badge">{{ d.size_pts }}pt</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- chart -->
+    <div class="chart-card">
+      <div class="chart-toolbar">
+        <span>Build State chart &nbsp;·&nbsp; {{ summary.snapshot_date }}</span>
+        <a class="btn" href="/build/latest-chart" download="Build_State_Chart_latest.png">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PNG
+        </a>
+      </div>
+      <div class="chart-img-wrap">
+        {% if chart_b64 %}
+        <img class="chart-img" src="data:image/png;base64,{{ chart_b64 }}" alt="Build State chart">
+        {% else %}
+        <p style="color:var(--muted);font-size:13px;padding:1rem 0">Chart not available — please re-upload the CSV.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {% endif %}
+  </div><!-- /panel-view -->
+
+
+  <!-- ══ UPLOAD TAB ══ -->
+  <div class="tab-panel" id="panel-upload">
+
+    <div style="margin-bottom:1rem">
+      <h2 style="font-size:16px;font-weight:500;margin-bottom:4px">Update the Build State</h2>
+      <p style="font-size:13px;color:var(--muted)">Update your four team columns in <code>Build_State_Tracker.csv</code>, then drop it here. The chart regenerates and goes live instantly.</p>
+    </div>
+
+    <div class="info-box">
+      <strong>Gate rule reminder:</strong> if Jim's <code>Jim_SP = 0</code>, leave <code>Team_MW</code> and <code>Team_FEwiring</code> at 0.
+      If <code>Jim_Mockup = 0</code>, leave <code>Team_Design</code> and <code>Team_FEdev</code> at 0.
+      A row blocked on Jim stays at 0 on the team side — that counts against <em>his</em> ledger, not yours.
+    </div>
+
+    <div class="name-row">
+      <label for="uploader-name">Uploaded by</label>
+      <input type="text" id="uploader-name" placeholder="Rishab" value="Rishab">
+    </div>
+
+    <div id="drop-zone">
+      <input type="file" id="file-input" accept=".csv,.xlsx,.xls">
+      <div class="upload-icon">
+        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </div>
+      <h2>Drop Build_State_Tracker.csv here</h2>
+      <p>or click to browse — chart goes live instantly</p>
+      <div class="formats">.csv · .xlsx &nbsp;·&nbsp; Module, Jim_Mockup, Jim_SP, Team_Design, Team_FEdev, Team_MW, Team_FEwiring required</div>
+    </div>
+
+    <div class="status-bar" id="status-bar"></div>
+    <button class="reupload-hint" id="reupload-btn" onclick="resetUI()">↩ Upload a different file</button>
+
+    <div class="copy-row" id="copy-row" style="display:none">
+      <span class="url" id="share-url"></span>
+      <button class="copy-btn" onclick="copyUrl()">Copy link</button>
+    </div>
+
+    <div id="upload-preview">
+      <div class="metrics-row" id="u-metrics" style="margin-top:1.5rem"></div>
+      <div class="chart-card" id="u-chart" style="display:none;margin-top:1rem">
+        <div class="chart-toolbar">
+          <span id="u-chart-label">Generating chart…</span>
+          <button class="btn" id="u-dl-btn" style="display:none" onclick="dlChart()">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download PNG
+          </button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:2rem;color:var(--muted);font-size:13px" id="u-spinner">
+          <div class="spinner"></div><span>Generating chart…</span>
+        </div>
+        <div class="chart-img-wrap" id="u-img-wrap" style="display:none">
+          <img class="chart-img" id="u-chart-img" alt="Build State chart">
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /panel-upload -->
+
+</main>
+
+<script>
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+// Animate bars on load
+requestAnimationFrame(() => {
+  document.querySelectorAll('.ledger-fill[data-target]').forEach(el => {
+    el.style.width = el.dataset.target + '%';
+  });
+  document.querySelectorAll('.mod-bar-jim[data-target]').forEach(el => {
+    el.style.width = el.dataset.target + '%';
+  });
+  document.querySelectorAll('.mod-bar-team[data-jtarget]').forEach(el => {
+    el.style.left  = el.dataset.jtarget + '%';
+    el.style.width = el.dataset.ttarget + '%';
+  });
+});
+
+function copyUrl() {
+  const url = document.getElementById('share-url').textContent.trim();
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy link', 2000);
+  });
+}
+
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const statusBar = document.getElementById('status-bar');
+const reupBtn   = document.getElementById('reupload-btn');
+const preview   = document.getElementById('upload-preview');
+const copyRow   = document.getElementById('copy-row');
+let chartBlob   = null;
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('over'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+function setStatus(type, msg) {
+  statusBar.className = 'status-bar ' + type;
+  statusBar.innerHTML = (type === 'loading' ? '<div class="spinner"></div>' : (type === 'ok' ? '✓' : '✕')) + ` <span>${msg}</span>`;
+  statusBar.style.display = 'flex';
+}
+
+function resetUI() {
+  chartBlob = null;
+  dropZone.style.display = 'block';
+  reupBtn.style.display = 'none';
+  statusBar.style.display = 'none';
+  preview.style.display = 'none';
+  copyRow.style.display = 'none';
+  fileInput.value = '';
+}
+
+async function handleFile(file) {
+  dropZone.style.display = 'none';
+  reupBtn.style.display = 'block';
+  setStatus('loading', `Reading ${file.name}…`);
+  preview.style.display = 'none';
+  copyRow.style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('uploaded_by', document.getElementById('uploader-name').value.trim() || 'Rishab');
+
+  let res;
+  try {
+    const r = await fetch('/build/upload', { method: 'POST', body: fd });
+    res = await r.json();
+  } catch(e) { setStatus('error', 'Network error — is the server running?'); return; }
+  if (res.error) { setStatus('error', res.error); return; }
+
+  const s = res.summary;
+  setStatus('ok', `✓ Live! ${s.module_count} modules · ${s.component_count} components · ${s.snapshot_date}`);
+
+  document.getElementById('share-url').textContent = window.location.origin + '/build';
+  copyRow.style.display = 'flex';
+
+  document.getElementById('u-metrics').innerHTML = `
+    <div class="metric-card"><div class="label">Overall</div><div class="value">${s.overall_pct}%</div><div class="sub">${s.done_pts} / ${s.total_pts} pts</div></div>
+    <div class="metric-card"><div class="label">Jim DoR</div><div class="value" style="color:#2563EB">${s.jim_pct}%</div><div class="sub">spec &amp; mockup</div></div>
+    <div class="metric-card"><div class="label">Team DoD</div><div class="value" style="color:#3B6D11">${s.team_pct}%</div><div class="sub">design → wiring</div></div>
+    <div class="metric-card"><div class="label">Modules</div><div class="value" style="color:var(--muted)">${s.module_count}</div><div class="sub">${s.component_count} components</div></div>`;
+  preview.style.display = 'block';
+
+  // fetch the chart that was just generated server-side
+  const chartCard = document.getElementById('u-chart');
+  chartCard.style.display = 'block';
+  document.getElementById('u-spinner').style.display = 'flex';
+  document.getElementById('u-img-wrap').style.display = 'none';
+  document.getElementById('u-dl-btn').style.display = 'none';
+
+  try {
+    const cr = await fetch('/build/latest-chart');
+    if (!cr.ok) throw new Error('chart fetch failed');
+    chartBlob = await cr.blob();
+    const url = URL.createObjectURL(chartBlob);
+    document.getElementById('u-chart-img').src = url;
+    document.getElementById('u-spinner').style.display = 'none';
+    document.getElementById('u-img-wrap').style.display = 'block';
+    document.getElementById('u-chart-label').textContent = `Build State chart · ${s.snapshot_date}`;
+    document.getElementById('u-dl-btn').style.display = 'inline-flex';
+  } catch(e) {
+    document.getElementById('u-spinner').style.display = 'none';
+    document.getElementById('u-chart-label').textContent = 'Chart generation failed — check server logs.';
+  }
+}
+
+function dlChart() {
+  if (!chartBlob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(chartBlob);
+  a.download = `Build_State_Chart_${new Date().toISOString().slice(0,10)}.png`;
+  a.click();
+}
+</script>
+</body>
+</html>
