@@ -163,9 +163,8 @@ def bp_summarise(rows: list[dict], uploaded_by: str = "") -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  BUILD STATE — constants + helpers (mirrors build_state_chart.py exactly)
 # ═══════════════════════════════════════════════════════════════════════════════
-JIM_W  = {"Jim_Mockup": 12, "Jim_SP": 36}          # Jim ledger  — 48 pts
-TEAM_W = {"Team_Design": 10, "Team_FEdev": 16,
-           "Team_MW": 12, "Team_FEwiring": 14}      # Team ledger — 52 pts
+JIM_KEYS  = ["Jim_Mockup", "Jim_SP"]
+TEAM_KEYS = ["Team_Design", "Team_FEdev", "Team_MW", "Team_FEwiring"]
 SIZE_PTS = {"S": 1, "M": 2, "L": 3, "XL": 5}
 SUB_PTS  = {"S": 1, "M": 2, "L": 3}
 
@@ -190,70 +189,130 @@ def _num(v):
 
 
 def bs_component_pct(row: dict) -> tuple[float, float]:
-    jim  = sum(JIM_W[k]  * _num(row.get(k, 0)) for k in JIM_W)  / sum(JIM_W.values())
-    team = sum(TEAM_W[k] * _num(row.get(k, 0)) for k in TEAM_W) / sum(TEAM_W.values())
+    j_vals = [_num(row[k]) for k in JIM_KEYS if str(row.get(k, "")).strip() not in ("NA", "N/A", "")]
+    t_vals = [_num(row[k]) for k in TEAM_KEYS if str(row.get(k, "")).strip() not in ("NA", "N/A", "")]
+    jim  = sum(j_vals) / len(j_vals) if j_vals else 0.0
+    team = sum(t_vals) / len(t_vals) if t_vals else 0.0
     return jim, team
 
 
 def bs_roll_up(rows: list[dict]) -> dict:
-    """Return {module: (size_pts, jim_pct, team_pct)}"""
-    by_mod: dict[str, list] = {}
+    by_parent: dict[str, list] = {}
     for r in rows:
-        if not r.get("Module"):
+        if not r.get("Parent Module"):
             continue
-        by_mod.setdefault(r["Module"], []).append(r)
+        by_parent.setdefault(r["Parent Module"], []).append(r)
+    
     out = {}
-    for mod, comps in by_mod.items():
-        size = SIZE_PTS.get(str(comps[0].get("ScreenSize", "M")).strip(), 2)
-        wsum = jacc = tacc = 0.0
-        for c in comps:
-            w = SUB_PTS.get(str(c.get("SubSize", "")).strip(), 1)
-            j, t = bs_component_pct(c)
-            wsum += w; jacc += w * j; tacc += w * t
-        out[mod] = (size, jacc / wsum if wsum else 0, tacc / wsum if wsum else 0)
+    for parent, p_rows in by_parent.items():
+        by_child = {}
+        for r in p_rows:
+            by_child.setdefault(r.get("Child Module", ""), []).append(r)
+            
+        p_wsum = p_jacc = p_tacc = 0.0
+        children_out = {}
+        
+        for child, c_rows in by_child.items():
+            c_wsum = c_jacc = c_tacc = 0.0
+            child_items = []
+            for c in c_rows:
+                sz = SIZE_PTS.get(str(c.get("ScreenSize", "M")).strip(), 2)
+                sub = SUB_PTS.get(str(c.get("SubSize", "")).strip(), 1)
+                w = sz * sub
+                j, t = bs_component_pct(c)
+                c_wsum += w; c_jacc += w * j; c_tacc += w * t
+                child_items.append({
+                    "label": c.get("Description", ""),
+                    "weight": w,
+                    "jim_pct": j,
+                    "team_pct": t
+                })
+            
+            p_wsum += c_wsum; p_jacc += c_jacc; p_tacc += c_tacc
+            children_out[child] = {
+                "weight": c_wsum,
+                "jim_pct": c_jacc / c_wsum if c_wsum else 0,
+                "team_pct": c_tacc / c_wsum if c_wsum else 0,
+                "rows": child_items
+            }
+            
+        out[parent] = {
+            "size_pts": p_wsum,
+            "jim_pct": p_jacc / p_wsum if p_wsum else 0,
+            "team_pct": p_tacc / p_wsum if p_wsum else 0,
+            "children": children_out
+        }
     return out
 
 
 def bs_make_chart(rows: list[dict]) -> bytes:
     screens = bs_roll_up(rows)
-    items = []   # (label, pts, jim_done_pts, team_done_pts)
-    for mod, (pts, jim, team) in sorted(screens.items(), key=lambda kv: -kv[1][0]):
-        items.append((mod, pts, pts * 0.48 * jim / 100, pts * 0.52 * team / 100))
-    items.append(("─── ENGINES ───", 0, 0, 0))
+    items = []   # (label, indent, jd, td, pct_done, is_bar)
+    
+    sorted_parents = sorted(screens.items(), key=lambda kv: -(kv[1]["jim_pct"]*0.48 + kv[1]["team_pct"]*0.52))
+    for mod, p_data in sorted_parents:
+        jd = 0.48 * p_data["jim_pct"]
+        td = 0.52 * p_data["team_pct"]
+        items.append((mod, 0, jd, td, jd + td, True))
+        
+        for child, c_data in p_data["children"].items():
+            if child:
+                items.append((child, 1, 0, 0, 0, False))
+            for r in c_data["rows"]:
+                r_jd = 0.48 * r["jim_pct"]
+                r_td = 0.52 * r["team_pct"]
+                label = r["label"] if r["label"] else "Untitled"
+                items.append((label, 2 if child else 1, r_jd, r_td, r_jd + r_td, True))
+                
+    items.append(("─── ENGINES ───", 0, 0, 0, 0, False))
     for name, pts, pct in ENGINES:
-        items.append((name, pts, pts * pct / 100, 0))
-    items.append(("Reserve (unscoped)", RESERVE_PTS, 0, 0))
+        items.append((name, 0, pct, 0, pct, True))
+    items.append(("Reserve (unscoped)", 0, 0, 0, 0, True))
 
     n = len(items)
     fig, ax = plt.subplots(figsize=(13, max(8, n * 0.38)))
     y = list(range(n))[::-1]
 
-    for yi, (label, pts, jd, td) in zip(y, items):
-        if pts == 0 and jd == 0 and td == 0:
+    for yi, (label, indent, jd, td, pct_done, is_bar) in zip(y, items):
+        if not is_bar:
             ax.axhline(yi, color="#DDDDDD", linewidth=0.6, zorder=0)
-            ax.text(0.1, yi, label, fontsize=9, weight="bold", va="center", color="#888888")
             continue
         ax.barh(yi, jd,           color="#2563EB", height=0.62, label="Jim done (DoR)")
         ax.barh(yi, td, left=jd,  color="#7AB87A", height=0.62, label="Team done (DoD)")
-        remain = max(0, pts - jd - td)
+        remain = max(0, 100 - jd - td)
         ax.barh(yi, remain, left=jd + td, color="#E5E7EB", height=0.62, label="Remaining",
                 edgecolor="#CCCCCC", linewidth=0.3)
-        pct_done = (jd + td) / pts * 100 if pts else 0
-        ax.text(pts + 0.06, yi, f"{pct_done:.0f}%", fontsize=8, va="center", color="#444444")
+        ax.text(100 + 1.5, yi, f"{pct_done:.0f}%", fontsize=8, va="center", color="#444444")
 
     ax.set_yticks(y)
-    ax.set_yticklabels([it[0] for it in items], fontsize=9)
-    ax.set_xlabel("Points", fontsize=10)
-    ax.set_xlim(0, 9.5)
+    ytick_labels = []
+    for label, indent, jd, td, pct_done, is_bar in items:
+        ytick_labels.append(f"{'    ' * indent}{label}")
+    ax.set_yticklabels(ytick_labels, fontsize=9)
+    
+    for i, tick_label in enumerate(ax.get_yticklabels()):
+        item = items[i]
+        if item[1] == 0:
+            tick_label.set_weight("bold")
+        if not item[5]:
+            tick_label.set_color("#666666")
+            
+    ax.set_xlabel("Progress (%)", fontsize=10)
+    ax.set_xlim(0, 105)
 
-    tot  = sum(it[1] for it in items)
-    done = sum(it[2] + it[3] for it in items)
+    tot_pts = sum(p["size_pts"] for p in screens.values()) + sum(e[1] for e in ENGINES) + RESERVE_PTS
+    jd_sum = sum(p["size_pts"] * 0.48 * p["jim_pct"] / 100 for p in screens.values())
+    td_sum = sum(p["size_pts"] * 0.52 * p["team_pct"] / 100 for p in screens.values())
+    done_pts = jd_sum + td_sum + sum(e[1] * e[2] / 100 for e in ENGINES)
+    overall_pct = done_pts / tot_pts * 100 if tot_pts else 0
     snap = date.today().isoformat()
+
     ax.set_title(
-        f"Build State — {done:.1f} / {tot:.0f} pts ({done/tot*100:.0f}%)  ·  {snap}\n"
+        f"Build State — {done_pts:.1f} / {tot_pts:.0f} pts ({overall_pct:.0f}%)  ·  {snap}\n"
         f"blue = Jim DoR  ·  green = Team DoD",
         fontsize=12, weight="bold", pad=12,
     )
+    
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     ax.spines["left"].set_color("#CCCCCC")
@@ -262,7 +321,6 @@ def bs_make_chart(rows: list[dict]) -> bytes:
     ax.set_axisbelow(True)
     ax.grid(axis="x", color="#EEEEEE", linewidth=0.5)
 
-    # Deduplicate legend handles
     seen, handles, labels = set(), [], []
     for h, l in zip(*ax.get_legend_handles_labels()):
         if l not in seen:
@@ -279,24 +337,22 @@ def bs_make_chart(rows: list[dict]) -> bytes:
 
 def bs_summarise(rows: list[dict], uploaded_by: str = "") -> dict:
     screens = bs_roll_up(rows)
-    tot  = sum(v[0] for v in screens.values()) + sum(e[1] for e in ENGINES) + RESERVE_PTS
-    done = sum(v[0] * 0.48 * v[1] / 100 + v[0] * 0.52 * v[2] / 100 for v in screens.values())
-    done += sum(e[1] * e[2] / 100 for e in ENGINES)
+    tot  = sum(p["size_pts"] for p in screens.values()) + sum(e[1] for e in ENGINES) + RESERVE_PTS
+    jim_done  = sum(p["size_pts"] * 0.48 * p["jim_pct"] / 100 for p in screens.values())
+    jim_total = sum(p["size_pts"] * 0.48 for p in screens.values())
+    team_done  = sum(p["size_pts"] * 0.52 * p["team_pct"] / 100 for p in screens.values())
+    team_total = sum(p["size_pts"] * 0.52 for p in screens.values())
+    done = jim_done + team_done + sum(e[1] * e[2] / 100 for e in ENGINES)
     overall_pct = round(done / tot * 100) if tot else 0
-
-    jim_done  = sum(v[0] * 0.48 * v[1] / 100 for v in screens.values())
-    jim_total = sum(v[0] * 0.48 for v in screens.values())
-    team_done  = sum(v[0] * 0.52 * v[2] / 100 for v in screens.values())
-    team_total = sum(v[0] * 0.52 for v in screens.values())
 
     by_module = {
         mod: {
-            "size_pts": v[0],
-            "jim_pct":  round(v[1]),
-            "team_pct": round(v[2]),
-            "overall_pct": round(v[0] * 0.48 * v[1] / 100 + v[0] * 0.52 * v[2] / 100) if v[0] else 0,
+            "size_pts": p["size_pts"],
+            "jim_pct":  round(p["jim_pct"]),
+            "team_pct": round(p["team_pct"]),
+            "overall_pct": round(p["jim_pct"]*0.48 + p["team_pct"]*0.52),
         }
-        for mod, v in sorted(screens.items(), key=lambda kv: -kv[1][0])
+        for mod, p in sorted(screens.items(), key=lambda kv: -(kv[1]["jim_pct"]*0.48 + kv[1]["team_pct"]*0.52))
     }
     return {
         "overall_pct": overall_pct,
@@ -316,7 +372,7 @@ def bs_summarise(rows: list[dict], uploaded_by: str = "") -> dict:
 def bs_parse_csv(file_bytes: bytes) -> list[dict]:
     text = file_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
-    required = {"Module", "ScreenSize", "Component", "SubSize",
+    required = {"Parent Module", "Child Module", "Description", "ScreenSize", "SubSize",
                  "Jim_Mockup", "Jim_SP", "Team_Design", "Team_FEdev", "Team_MW", "Team_FEwiring"}
     rows = list(reader)
     if not rows:
