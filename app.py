@@ -247,89 +247,201 @@ def bs_roll_up(rows: list[dict]) -> dict:
 
 def bs_make_chart(rows: list[dict]) -> bytes:
     screens = bs_roll_up(rows)
-    items = []   # (label, indent, jd, td, pct_done, is_bar)
-    
-    sorted_parents = sorted(screens.items(), key=lambda kv: -(kv[1]["jim_pct"]*0.48 + kv[1]["team_pct"]*0.52))
-    for mod, p_data in sorted_parents:
+
+    # ── build item list ────────────────────────────────────────────────────────
+    # Each item: dict with keys: kind, label, indent, jd, td, pct_done
+    # kind = "parent" | "child_header" | "row" | "engine_header" | "engine_row" | "gap"
+    items = []
+
+    sorted_parents = sorted(
+        screens.items(),
+        key=lambda kv: -(kv[1]["jim_pct"] * 0.48 + kv[1]["team_pct"] * 0.52),
+    )
+
+    for i_par, (mod, p_data) in enumerate(sorted_parents):
+        if i_par > 0:
+            items.append({"kind": "gap"})          # breathing room between parents
         jd = 0.48 * p_data["jim_pct"]
         td = 0.52 * p_data["team_pct"]
-        items.append((mod, 0, jd, td, jd + td, True))
-        
+        items.append({"kind": "parent", "label": mod, "jd": jd, "td": td, "pct": jd + td})
+
         for child, c_data in p_data["children"].items():
             if child:
-                items.append((child, 1, 0, 0, 0, False))
+                c_jd = 0.48 * c_data["jim_pct"]
+                c_td = 0.52 * c_data["team_pct"]
+                items.append({"kind": "child_header", "label": child,
+                               "jd": c_jd, "td": c_td, "pct": c_jd + c_td})
             for r in c_data["rows"]:
                 r_jd = 0.48 * r["jim_pct"]
                 r_td = 0.52 * r["team_pct"]
-                label = r["label"] if r["label"] else "Untitled"
-                items.append((label, 2 if child else 1, r_jd, r_td, r_jd + r_td, True))
-                
-    items.append(("─── ENGINES ───", 0, 0, 0, 0, False))
+                items.append({"kind": "row", "label": r["label"] or "Untitled",
+                               "jd": r_jd, "td": r_td, "pct": r_jd + r_td})
+
+    # engines block
+    items.append({"kind": "gap"})
+    items.append({"kind": "engine_header"})
     for name, pts, pct in ENGINES:
-        items.append((name, 0, pct, 0, pct, True))
-    items.append(("Reserve (unscoped)", 0, 0, 0, 0, True))
+        items.append({"kind": "engine_row", "label": name, "pct": pct})
+    items.append({"kind": "engine_row", "label": "Reserve (unscoped)", "pct": 0})
+
+    # ── row heights & y positions ──────────────────────────────────────────────
+    ROW_H   = {"parent": 0.52, "child_header": 0.38, "row": 0.45,
+               "engine_row": 0.45, "engine_header": 0.0, "gap": 0.0}
+    SPACING = {"parent": 0.80, "child_header": 0.60, "row": 0.55,
+               "engine_row": 0.55, "engine_header": 0.50, "gap": 0.30}
 
     n = len(items)
-    fig, ax = plt.subplots(figsize=(13, max(8, n * 0.38)))
-    y = list(range(n))[::-1]
+    total_space = sum(SPACING[it["kind"]] for it in items)
+    fig_h = max(10, total_space * 0.52)
+    fig, ax = plt.subplots(figsize=(15, fig_h))
 
-    for yi, (label, indent, jd, td, pct_done, is_bar) in zip(y, items):
-        if not is_bar:
-            ax.axhline(yi, color="#DDDDDD", linewidth=0.6, zorder=0)
+    # assign y positions (top-down)
+    y_pos = []
+    y = total_space
+    for it in items:
+        y -= SPACING[it["kind"]] / 2
+        y_pos.append(y)
+        y -= SPACING[it["kind"]] / 2
+
+    ax.set_ylim(0, total_space)
+    ax.set_xlim(-2, 112)
+    ax.invert_yaxis()
+
+    # ── draw ──────────────────────────────────────────────────────────────────
+    INDENT_CHILD = 3.5      # x-start for child bars
+    INDENT_ROW   = 6.5      # x-start for row bars
+    BAR_MAX_CHILD = 96.5    # available bar width for child
+    BAR_MAX_ROW   = 93.5
+
+    PARENT_BG  = "#1E293B"   # slate-800
+    CHILD_BG   = "#E8F0FE"   # blue-50 tint
+    CHILD_LINE = "#93C5FD"   # blue-300
+    ENGINE_BG  = "#F1F5F9"   # slate-100
+
+    for yi, it in zip(y_pos, items):
+        k = it["kind"]
+
+        if k == "gap":
             continue
-        ax.barh(yi, jd,           color="#2563EB", height=0.62, label="Jim done (DoR)")
-        ax.barh(yi, td, left=jd,  color="#7AB87A", height=0.62, label="Team done (DoD)")
-        remain = max(0, 100 - jd - td)
-        ax.barh(yi, remain, left=jd + td, color="#E5E7EB", height=0.62, label="Remaining",
-                edgecolor="#CCCCCC", linewidth=0.3)
-        ax.text(100 + 1.5, yi, f"{pct_done:.0f}%", fontsize=8, va="center", color="#444444")
 
-    ax.set_yticks(y)
-    ytick_labels = []
-    for label, indent, jd, td, pct_done, is_bar in items:
-        ytick_labels.append(f"{'    ' * indent}{label}")
-    ax.set_yticklabels(ytick_labels, fontsize=9)
-    
-    for i, tick_label in enumerate(ax.get_yticklabels()):
-        item = items[i]
-        if item[1] == 0:
-            tick_label.set_weight("bold")
-        if not item[5]:
-            tick_label.set_color("#666666")
-            
-    ax.set_xlabel("Progress (%)", fontsize=10)
-    ax.set_xlim(0, 105)
+        if k == "engine_header":
+            ax.axhline(yi, color="#CBD5E1", linewidth=1.5, linestyle="--", zorder=1)
+            ax.text(50, yi - 0.08, "── ENGINES ──", fontsize=8.5, color="#94A3B8",
+                    ha="center", va="bottom", style="italic")
+            continue
 
+        # ── parent: full-width dark band ──────────────────────────────────────
+        if k == "parent":
+            h = ROW_H["parent"]
+            ax.barh(yi, 112, left=-2, height=h + 0.12,
+                    color=PARENT_BG, zorder=1)
+            # Jim segment
+            jd_w = it["jd"] * BAR_MAX_CHILD / 100
+            td_w = it["td"] * BAR_MAX_CHILD / 100
+            ax.barh(yi, jd_w, left=INDENT_CHILD, height=h * 0.55,
+                    color="#60A5FA", zorder=3, label="Jim done (DoR)")
+            ax.barh(yi, td_w, left=INDENT_CHILD + jd_w, height=h * 0.55,
+                    color="#86EFAC", zorder=3, label="Team done (DoD)")
+            remain_w = max(0, BAR_MAX_CHILD - jd_w - td_w)
+            ax.barh(yi, remain_w, left=INDENT_CHILD + jd_w + td_w, height=h * 0.55,
+                    color=(1, 1, 1, 0.12), zorder=2,
+                    edgecolor=(1, 1, 1, 0.2), linewidth=0.4)
+            # label on the left
+            ax.text(-1.5, yi, it["label"], fontsize=10, weight="bold", color="white",
+                    va="center", ha="left", zorder=4)
+            # pct on right
+            ax.text(103, yi, f"{it['pct']:.0f}%", fontsize=9.5, weight="bold",
+                    color="white", va="center", zorder=4)
+            continue
+
+        # ── child header: tinted band + left accent line ──────────────────────
+        if k == "child_header":
+            h = ROW_H["child_header"]
+            ax.barh(yi, 114, left=-2, height=h + 0.1, color=CHILD_BG, zorder=1)
+            ax.barh(yi, 0.55, left=-2, height=h + 0.1, color=CHILD_LINE, zorder=2)
+            ax.text(INDENT_CHILD + 0.5, yi, it["label"].upper(),
+                    fontsize=7.5, weight="bold", color="#1D4ED8",
+                    va="center", ha="left", zorder=3, style="normal")
+            ax.text(103, yi, f"{it['pct']:.0f}%", fontsize=7.5,
+                    color="#3B82F6", va="center", zorder=3)
+            continue
+
+        # ── row: indented bar ─────────────────────────────────────────────────
+        if k == "row":
+            h = ROW_H["row"]
+            jd_w = it["jd"] * BAR_MAX_ROW / 100
+            td_w = it["td"] * BAR_MAX_ROW / 100
+            remain_w = max(0, BAR_MAX_ROW - jd_w - td_w)
+            ax.barh(yi, jd_w, left=INDENT_ROW, height=h,
+                    color="#2563EB", zorder=2, label="Jim done (DoR)")
+            ax.barh(yi, td_w, left=INDENT_ROW + jd_w, height=h,
+                    color="#7AB87A", zorder=2, label="Team done (DoD)")
+            ax.barh(yi, remain_w, left=INDENT_ROW + jd_w + td_w, height=h,
+                    color="#E5E7EB", zorder=2, edgecolor="#D1D5DB", linewidth=0.3,
+                    label="Remaining")
+            ax.text(INDENT_ROW - 0.3, yi, it["label"], fontsize=8, color="#374151",
+                    va="center", ha="right")
+            ax.text(103, yi, f"{it['pct']:.0f}%", fontsize=7.5,
+                    color="#6B7280", va="center")
+            continue
+
+        # ── engine row ────────────────────────────────────────────────────────
+        if k == "engine_row":
+            h = ROW_H["engine_row"]
+            pct = it.get("pct", 0)
+            ax.barh(yi, pct * BAR_MAX_CHILD / 100, left=INDENT_CHILD, height=h,
+                    color="#94A3B8", zorder=2, alpha=0.8)
+            ax.barh(yi, max(0, BAR_MAX_CHILD - pct * BAR_MAX_CHILD / 100),
+                    left=INDENT_CHILD + pct * BAR_MAX_CHILD / 100, height=h,
+                    color="#E5E7EB", zorder=2, edgecolor="#D1D5DB", linewidth=0.3)
+            ax.text(INDENT_CHILD - 0.5, yi, it["label"], fontsize=8.5,
+                    color="#475569", va="center", ha="right", style="italic")
+            ax.text(103, yi, f"{pct:.0f}%", fontsize=8, color="#64748B", va="center")
+
+    # ── axes & chrome ─────────────────────────────────────────────────────────
+    ax.set_yticks([])
+    ax.set_xticks([0, 25, 50, 75, 100])
+    ax.set_xticklabels(["0%", "25%", "50%", "75%", "100%"], fontsize=9, color="#9CA3AF")
+    ax.set_xlabel("")
+    ax.tick_params(left=False, bottom=True, colors="#D1D5DB")
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color("#E5E7EB")
+    ax.set_axisbelow(True)
+    ax.grid(axis="x", color="#F3F4F6", linewidth=0.8, zorder=0)
+
+    # ── x-tick lines at INDENT_CHILD origin ──────────────────────────────────
+    for xv in [25, 50, 75, 100]:
+        ax.axvline(INDENT_CHILD + xv * BAR_MAX_CHILD / 100,
+                   color="#E5E7EB", linewidth=0.5, zorder=0)
+
+    # ── title ─────────────────────────────────────────────────────────────────
     tot_pts = sum(p["size_pts"] for p in screens.values()) + sum(e[1] for e in ENGINES) + RESERVE_PTS
-    jd_sum = sum(p["size_pts"] * 0.48 * p["jim_pct"] / 100 for p in screens.values())
-    td_sum = sum(p["size_pts"] * 0.52 * p["team_pct"] / 100 for p in screens.values())
+    jd_sum  = sum(p["size_pts"] * 0.48 * p["jim_pct"] / 100 for p in screens.values())
+    td_sum  = sum(p["size_pts"] * 0.52 * p["team_pct"] / 100 for p in screens.values())
     done_pts = jd_sum + td_sum + sum(e[1] * e[2] / 100 for e in ENGINES)
     overall_pct = done_pts / tot_pts * 100 if tot_pts else 0
     snap = date.today().isoformat()
 
     ax.set_title(
-        f"Build State — {done_pts:.1f} / {tot_pts:.0f} pts ({overall_pct:.0f}%)  ·  {snap}\n"
-        f"blue = Jim DoR  ·  green = Team DoD",
-        fontsize=12, weight="bold", pad=12,
+        f"Build State  ·  {done_pts:.1f} / {tot_pts:.0f} pts  ({overall_pct:.0f}% complete)  ·  {snap}",
+        fontsize=13, weight="bold", color="#1E293B", pad=16, loc="left",
     )
-    
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    ax.spines["left"].set_color("#CCCCCC")
-    ax.spines["bottom"].set_color("#CCCCCC")
-    ax.tick_params(colors="#666666")
-    ax.set_axisbelow(True)
-    ax.grid(axis="x", color="#EEEEEE", linewidth=0.5)
 
-    seen, handles, labels = set(), [], []
-    for h, l in zip(*ax.get_legend_handles_labels()):
-        if l not in seen:
-            seen.add(l); handles.append(h); labels.append(l)
-    ax.legend(handles=handles, labels=labels, loc="lower right", frameon=False, fontsize=9)
+    # ── legend ────────────────────────────────────────────────────────────────
+    from matplotlib.patches import Patch as _Patch
+    legend_items = [
+        _Patch(facecolor="#2563EB", label="Jim done (DoR)"),
+        _Patch(facecolor="#7AB87A", label="Team done (DoD)"),
+        _Patch(facecolor="#E5E7EB", edgecolor="#D1D5DB", label="Remaining"),
+    ]
+    ax.legend(handles=legend_items, loc="lower right", frameon=True,
+              fontsize=9, framealpha=0.9, edgecolor="#E5E7EB",
+              facecolor="white", bbox_to_anchor=(1, 0))
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=140, bbox_inches="tight", facecolor="white")
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     buf.seek(0)
     return buf.read()
